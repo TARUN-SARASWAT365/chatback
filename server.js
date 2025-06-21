@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+require('dotenv').config(); // ✅ Load .env variables (optional if using Render env vars)
 
 const User = require('./models/User');
 const Message = require('./models/Message');
@@ -34,28 +35,24 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// ✅ Updated Upload Endpoint with Full URL
 app.post('/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-  const fileUrl = `http://${req.hostname}:5000/uploads/${req.file.filename}`;
+  // ✅ Updated for Render URL safety
+  const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
   console.log('📁 File uploaded:', fileUrl);
 
   res.json({ url: fileUrl });
 });
 
-// Connect to MongoDB
+// ✅ MongoDB connection using env variable
 mongoose
-  .connect('mongodb://localhost:27017/socket_admin', {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-  })
+  .connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB connected'))
   .catch(err => console.error('❌ MongoDB connection error:', err));
 
 // Active users
 const usersMap = {};
-
 const emitOnlineUsers = () => {
   const onlineUsernames = Object.keys(usersMap);
   io.emit('online_users', onlineUsernames);
@@ -117,7 +114,7 @@ io.on('connection', socket => {
   });
 });
 
-// API routes
+// ✅ API routes
 app.post('/register', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password)
@@ -158,8 +155,6 @@ app.get('/messages', async (req, res) => {
   res.json(messages);
 });
 
-// 🔥 Listen on all interfaces so other devices can access via IP
-const PORT = 5000;
-server.listen(PORT, '0.0.0.0', () =>
-  console.log(`🚀 Server running at http://192.168.1.19:${PORT}`)
-);
+// ✅ Use dynamic port (important for Render)
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
