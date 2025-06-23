@@ -1,184 +1,176 @@
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const http = require('http');
-const { Server } = require('socket.io');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-require('dotenv').config();
+import React, { useState, useEffect, useRef } from 'react';
+import io from 'socket.io-client';
+import axios from 'axios';
+import { ArrowLeft } from 'lucide-react';
+import './Chat.css';
 
-const User = require('./models/User');
-const Message = require('./models/Message');
+const socket = io('https://chatback-7.onrender.com');
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
-  }
-});
+const reactionsList = ['👍', '❤️', '😂', '😮', '😢', '👏'];
 
-app.use(cors());
-app.use(express.json());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+const Chat = ({ currentUser }) => {
+  const [users, setUsers] = useState([]);
+  const [onlineUsers, setOnlineUsers] = useState([]);
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [file, setFile] = useState(null);
+  const [darkMode, setDarkMode] = useState(false);
+  const messagesEndRef = useRef(null);
 
-// Create uploads folder if missing
-if (!fs.existsSync('./uploads')) fs.mkdirSync('./uploads');
+  useEffect(() => {
+    socket.emit('user_connected', currentUser);
 
-// Multer config
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
-  filename: (req, file, cb) =>
-    cb(null, Date.now() + path.extname(file.originalname))
-});
-const upload = multer({ storage });
+    socket.on('online_users', setOnlineUsers);
+    socket.on('receive_message', msg => {
+      setMessages(prev => [...prev, msg]);
+    });
+    socket.on('message_deleted', id => {
+      setMessages(prev => prev.filter(m => m._id !== id));
+    });
+    socket.on('message_updated', updated => {
+      setMessages(prev => prev.map(m => (m._id === updated._id ? updated : m)));
+    });
 
-// File upload route
-app.post('/upload', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    // New: listen for reaction updates
+    socket.on('reaction_updated', ({ messageId, reactions }) => {
+      setMessages(prev =>
+        prev.map(m => (m._id === messageId ? { ...m, reactions } : m))
+      );
+    });
 
-  const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
-  console.log('📁 File uploaded:', fileUrl);
-  res.json({ url: fileUrl });
-});
+    return () => socket.disconnect();
+  }, [currentUser]);
 
-// MongoDB connect
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log('✅ MongoDB connected'))
-  .catch(err => console.error('❌ MongoDB error:', err));
+  useEffect(() => {
+    axios.get('https://chatback-7.onrender.com/users').then(res => setUsers(res.data));
+  }, []);
 
-// Online user tracking
-const usersMap = {};
-const emitOnlineUsers = () => {
-  const onlineUsernames = Object.keys(usersMap);
-  io.emit('online_users', onlineUsernames);
+  useEffect(() => {
+    if (!selectedUser) return;
+    axios
+      .get(`https://chatback-7.onrender.com/messages?sender=${currentUser}&receiver=${selectedUser}`)
+      .then(res => setMessages(res.data));
+  }, [selectedUser, currentUser]);
+
+  const sendMessage = async () => {
+    if (!newMessage && !file) return;
+    let content = newMessage;
+
+    if (file) {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await axios.post('https://chatback-7.onrender.com/upload', formData);
+      content = res.data.url;
+      setFile(null);
+    }
+
+    const msg = {
+      sender: currentUser,
+      receiver: selectedUser,
+      content,
+      timestamp: new Date(),
+    };
+    socket.emit('send_message', msg);
+    setNewMessage('');
+  };
+
+  const handleFileChange = e => setFile(e.target.files[0]);
+
+  const toggleReaction = (messageId, reaction) => {
+    socket.emit('toggle_reaction', { messageId, user: currentUser, reaction });
+  };
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  return (
+    <div className={`chat-container ${darkMode ? 'dark' : ''}`}>
+      <div className={`sidebar ${selectedUser ? 'hide-on-mobile' : ''}`}>
+        <h4>Users</h4>
+        {users.map(u => (
+          <div
+            key={u.username}
+            className={`user-item ${
+              selectedUser === u.username ? 'active' : ''
+            } ${onlineUsers.includes(u.username) ? 'online' : ''}`}
+            onClick={() => setSelectedUser(u.username)}
+          >
+            <span
+              className={`status-dot ${onlineUsers.includes(u.username) ? 'online' : ''}`}
+            ></span>
+            {u.username}
+          </div>
+        ))}
+        <button onClick={() => setDarkMode(!darkMode)}>Toggle Dark Mode</button>
+      </div>
+
+      {selectedUser && (
+        <div className="chat-window">
+          <div className="chat-header">
+            <button className="back-btn" onClick={() => setSelectedUser(null)}>
+              <ArrowLeft size={20} />
+            </button>
+            {`Chat with ${selectedUser}`}
+          </div>
+
+          <div className="messages">
+            {messages.map(m => (
+              <div
+                key={m._id}
+                className={`message ${m.sender === currentUser ? 'sent' : 'received'}`}
+              >
+                {m.content.match(/\.(jpeg|jpg|png|gif)$/i) ? (
+                  <div className="file-preview">
+                    <img src={m.content} alt="sent file" />
+                  </div>
+                ) : (
+                  <div className="msg-content">{m.content}</div>
+                )}
+
+                {/* Reactions display */}
+                <div className="reactions">
+                  {m.reactions &&
+                    m.reactions.map((r, i) => (
+                      <span key={i} title={r.user}>
+                        {r.reaction}
+                      </span>
+                    ))}
+
+                  {/* Reaction buttons */}
+                  {reactionsList.map(reaction => (
+                    <button
+                      key={reaction}
+                      className="reaction-btn"
+                      onClick={() => toggleReaction(m._id, reaction)}
+                    >
+                      {reaction}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="msg-time">{new Date(m.timestamp).toLocaleTimeString()}</div>
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+
+          <div className="input-area">
+            <input type="file" onChange={handleFileChange} />
+            <input
+              type="text"
+              placeholder="Type a message..."
+              value={newMessage}
+              onChange={e => setNewMessage(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && sendMessage()}
+            />
+            <button onClick={sendMessage}>Send</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
-// Socket events
-io.on('connection', socket => {
-  console.log('🟢 Connected:', socket.id);
-
-  // ✅ User comes online
-  socket.on('user_connected', username => {
-    usersMap[username] = socket.id;
-    emitOnlineUsers();
-  });
-
-  // ✅ Send message
-  socket.on('send_message', async data => {
-    try {
-      const isImage = typeof data.content === 'string' &&
-        data.content.match(/\.(jpeg|jpg|png|gif|webp)$/i);
-
-      const message = {
-        ...data,
-        type: isImage ? 'image' : 'text',
-        timestamp: data.timestamp || new Date(),
-        seen: false
-      };
-
-      const saved = await Message.create(message);
-
-      const targetSocket = usersMap[data.receiver];
-      if (targetSocket) io.to(targetSocket).emit('receive_message', saved);
-      socket.emit('receive_message', saved);
-    } catch (err) {
-      console.error('❌ Send error:', err);
-    }
-  });
-
-  // ✅ Typing indicator
-  socket.on('typing', ({ sender, receiver }) => {
-    const targetSocket = usersMap[receiver];
-    if (targetSocket) {
-      io.to(targetSocket).emit('typing', sender);
-    }
-  });
-
-  // ✅ Update message
-  socket.on('update_message', async msg => {
-    const updated = await Message.findByIdAndUpdate(
-      msg._id,
-      { content: msg.content },
-      { new: true }
-    );
-    io.emit('message_updated', updated);
-  });
-
-  // ✅ Delete message
-  socket.on('delete_message', async id => {
-    await Message.findByIdAndDelete(id);
-    io.emit('message_deleted', id);
-  });
-
-  // ✅ Mark messages as seen
-  socket.on('mark_seen', async ({ sender, receiver }) => {
-    await Message.updateMany({ sender, receiver, seen: false }, { seen: true });
-    const seenMessages = await Message.find({
-      $or: [
-        { sender, receiver },
-        { sender: receiver, receiver: sender }
-      ]
-    }).sort({ timestamp: 1 });
-    socket.emit('messages_seen', seenMessages);
-  });
-
-  // ✅ Disconnect
-  socket.on('disconnect', () => {
-    for (let username in usersMap) {
-      if (usersMap[username] === socket.id) {
-        delete usersMap[username];
-        break;
-      }
-    }
-    emitOnlineUsers();
-  });
-});
-
-// Auth APIs
-app.post('/register', async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password)
-    return res.status(400).json({ error: 'All fields are required' });
-
-  const exists = await User.findOne({ username });
-  if (exists) return res.status(400).json({ error: 'User already exists' });
-
-  await User.create({ username, password });
-  res.json({ message: 'Registered successfully' });
-});
-
-app.post('/login', async (req, res) => {
-  const { username, password } = req.body;
-  const user = await User.findOne({ username, password });
-  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-
-  res.json({ message: 'Login successful' });
-});
-
-app.get('/users', async (req, res) => {
-  const users = await User.find({}, 'username -_id');
-  res.json(users);
-});
-
-app.get('/messages', async (req, res) => {
-  const { sender, receiver } = req.query;
-  if (!sender || !receiver)
-    return res.status(400).json({ error: 'Missing sender or receiver' });
-
-  const messages = await Message.find({
-    $or: [
-      { sender, receiver },
-      { sender: receiver, receiver: sender }
-    ]
-  }).sort({ timestamp: 1 });
-
-  res.json(messages);
-});
-
-// Start server
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+export default Chat;
