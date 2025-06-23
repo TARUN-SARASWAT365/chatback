@@ -31,13 +31,6 @@ const messageSchema = new mongoose.Schema({
 });
 const Message = mongoose.model('Message', messageSchema);
 
-// Connect MongoDB
-mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1/chat', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-}).then(() => console.log('MongoDB connected'))
-  .catch(err => console.log('MongoDB connection error:', err));
-
 // --------- REGISTER ---------
 app.post('/api/users/register', async (req, res) => {
   const { username, password } = req.body;
