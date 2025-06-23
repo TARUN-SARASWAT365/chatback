@@ -8,9 +8,20 @@ const bcrypt = require('bcrypt');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
 
-app.use(cors());
+// Update backend URL for Socket.IO CORS:
+const io = new Server(server, {
+  cors: {
+    origin: ['https://your-frontend-domain.com'], // <-- Apne frontend ka domain yahan daalein
+    methods: ['GET', 'POST'],
+  },
+});
+
+app.use(cors({
+  origin: ['https://your-frontend-domain.com'], // frontend domain
+  methods: ['GET', 'POST'],
+  credentials: true,
+}));
 app.use(express.json());
 
 // User schema

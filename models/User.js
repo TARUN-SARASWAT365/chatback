@@ -1,12 +1,8 @@
 const mongoose = require('mongoose');
 
-const messageSchema = new mongoose.Schema({
-  sender: String,
-  receiver: String,
-  content: String,
-  timestamp: Date,
-  reactions: [{ user: String, reaction: String }],
-  seen: { type: Boolean, default: false },
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
 });
 
-module.exports = mongoose.model('Message', messageSchema);
+module.exports = mongoose.model('User', userSchema);
