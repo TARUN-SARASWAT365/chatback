@@ -18,6 +18,14 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1/chat', {
   useUnifiedTopology: true,
 });
 
+// User schema for login
+const userSchema = new mongoose.Schema({
+  username: { type: String, unique: true },
+  password: String,
+});
+
+const User = mongoose.model('User', userSchema);
+
 const messageSchema = new mongoose.Schema({
   sender: String,
   receiver: String,
@@ -31,6 +39,47 @@ const Message = mongoose.model('Message', messageSchema);
 
 let onlineUsers = [];
 
+// --- LOGIN API ---
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ message: 'Username and password required' });
+  }
+
+  try {
+    const user = await User.findOne({ username });
+    if (!user) {
+      return res.status(400).json({ message: 'User not found' });
+    }
+    if (user.password !== password) {
+      return res.status(400).json({ message: 'Invalid password' });
+    }
+
+    res.json({ user: { username: user.username } });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Optionally: register user API to add new users easily
+app.post('/register', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ message: 'Username and password required' });
+
+  try {
+    const exists = await User.findOne({ username });
+    if (exists) return res.status(400).json({ message: 'User already exists' });
+
+    const newUser = new User({ username, password });
+    await newUser.save();
+    res.json({ message: 'User registered' });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Socket.io connection
 io.on('connection', socket => {
   socket.on('user_connected', username => {
     socket.username = username;
@@ -58,7 +107,7 @@ io.on('connection', socket => {
   });
 
   socket.on('mark_seen', async ({ sender, receiver }) => {
-    const unseen = await Message.updateMany(
+    await Message.updateMany(
       { sender, receiver, seen: false },
       { $set: { seen: true } }
     );
