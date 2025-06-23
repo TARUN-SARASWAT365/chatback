@@ -1,9 +1,8 @@
 const express = require('express');
 const cors = require('cors');
-const multer = require('multer');
+const mongoose = require('mongoose');
 const http = require('http');
 const { Server } = require('socket.io');
-const mongoose = require('mongoose');
 require('dotenv').config();
 
 const app = express();
@@ -13,18 +12,11 @@ const io = new Server(server, { cors: { origin: '*' } });
 app.use(cors());
 app.use(express.json());
 
-mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1/chat', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
-
-// User schema for login
+// Mongoose schemas (User & Message)
 const userSchema = new mongoose.Schema({
-  username: { type: String, unique: true },
-  password: String,
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
 });
-
-const User = mongoose.model('User', userSchema);
 
 const messageSchema = new mongoose.Schema({
   sender: String,
@@ -35,115 +27,111 @@ const messageSchema = new mongoose.Schema({
   seen: { type: Boolean, default: false },
 });
 
+const User = mongoose.model('User', userSchema);
 const Message = mongoose.model('Message', messageSchema);
 
-let onlineUsers = [];
+// Connect to MongoDB
+mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1/chat', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => console.log('MongoDB connected'))
+.catch(err => console.log('MongoDB connection error:', err));
 
-// --- LOGIN API ---
-app.post('/login', async (req, res) => {
+// ========== USER ROUTES ==========
+
+// Register new user
+app.post('/api/users/register', async (req, res) => {
   const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
 
-  if (!username || !password) {
-    return res.status(400).json({ message: 'Username and password required' });
-  }
+  const userExists = await User.findOne({ username });
+  if (userExists) return res.status(400).json({ error: 'Username already taken' });
 
-  try {
-    const user = await User.findOne({ username });
-    if (!user) {
-      return res.status(400).json({ message: 'User not found' });
-    }
-    if (user.password !== password) {
-      return res.status(400).json({ message: 'Invalid password' });
-    }
-
-    res.json({ user: { username: user.username } });
-  } catch (err) {
-    res.status(500).json({ message: 'Server error' });
-  }
+  const user = new User({ username, password });
+  await user.save();
+  res.json({ message: 'User registered successfully' });
 });
 
-// Optionally: register user API to add new users easily
-app.post('/register', async (req, res) => {
+// Login user
+app.post('/api/users/login', async (req, res) => {
   const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ message: 'Username and password required' });
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
 
-  try {
-    const exists = await User.findOne({ username });
-    if (exists) return res.status(400).json({ message: 'User already exists' });
+  const user = await User.findOne({ username });
+  if (!user || user.password !== password) return res.status(400).json({ error: 'Invalid credentials' });
 
-    const newUser = new User({ username, password });
-    await newUser.save();
-    res.json({ message: 'User registered' });
-  } catch (err) {
-    res.status(500).json({ message: 'Server error' });
-  }
+  res.json({ username: user.username });
 });
 
-// Socket.io connection
-io.on('connection', socket => {
-  socket.on('user_connected', username => {
-    socket.username = username;
-    if (!onlineUsers.includes(username)) onlineUsers.push(username);
-    io.emit('online_users', onlineUsers);
-  });
-
-  socket.on('send_message', async data => {
-    const msg = await Message.create(data);
-    io.emit('receive_message', msg);
-  });
-
-  socket.on('toggle_reaction', async ({ messageId, user, reaction }) => {
-    const msg = await Message.findById(messageId);
-    if (!msg) return;
-
-    const index = msg.reactions.findIndex(r => r.user === user && r.reaction === reaction);
-    if (index >= 0) {
-      msg.reactions.splice(index, 1);
-    } else {
-      msg.reactions.push({ user, reaction });
-    }
-    await msg.save();
-    io.emit('reaction_updated', { messageId, reactions: msg.reactions });
-  });
-
-  socket.on('mark_seen', async ({ sender, receiver }) => {
-    await Message.updateMany(
-      { sender, receiver, seen: false },
-      { $set: { seen: true } }
-    );
-    const updatedMessages = await Message.find({ sender, receiver });
-    io.emit('messages_seen', { sender, receiver, updatedMessages });
-  });
-
-  socket.on('disconnect', () => {
-    onlineUsers = onlineUsers.filter(u => u !== socket.username);
-    io.emit('online_users', onlineUsers);
-  });
+// Get all users
+app.get('/api/users', async (req, res) => {
+  const users = await User.find({}, 'username');
+  res.json(users);
 });
 
-app.get('/users', async (req, res) => {
-  const messages = await Message.find();
-  const usernames = Array.from(new Set([...messages.map(m => m.sender), ...messages.map(m => m.receiver)]));
-  res.json(usernames.map(username => ({ username })));
-});
+// ========== MESSAGE ROUTES ==========
 
-app.get('/messages', async (req, res) => {
+// Get messages between two users
+app.get('/api/messages', async (req, res) => {
   const { sender, receiver } = req.query;
+  if (!sender || !receiver) return res.status(400).json({ error: 'Sender and receiver required' });
+
   const messages = await Message.find({
     $or: [
       { sender, receiver },
       { sender: receiver, receiver: sender }
     ]
   }).sort({ timestamp: 1 });
+
   res.json(messages);
 });
 
-const storage = multer.memoryStorage();
-const upload = multer({ storage });
+// Save new message
+app.post('/api/messages', async (req, res) => {
+  const { sender, receiver, content } = req.body;
+  if (!sender || !receiver || !content) return res.status(400).json({ error: 'Missing fields' });
 
-app.post('/upload', upload.single('file'), (req, res) => {
-  const url = `https://via.placeholder.com/300?text=${encodeURIComponent(req.file.originalname)}`;
-  res.json({ url });
+  const message = new Message({
+    sender,
+    receiver,
+    content,
+    timestamp: new Date(),
+    reactions: [],
+    seen: false,
+  });
+
+  await message.save();
+  res.json(message);
 });
 
-server.listen(process.env.PORT || 5000, () => console.log('Server running'));
+// ======= SOCKET.IO =======
+
+let onlineUsers = new Set();
+
+io.on('connection', socket => {
+  console.log('User connected:', socket.id);
+
+  socket.on('user_connected', username => {
+    socket.username = username;
+    onlineUsers.add(username);
+    io.emit('online_users', Array.from(onlineUsers));
+  });
+
+  socket.on('send_message', msg => {
+    io.emit('receive_message', msg);
+  });
+
+  socket.on('disconnect', () => {
+    if (socket.username) {
+      onlineUsers.delete(socket.username);
+      io.emit('online_users', Array.from(onlineUsers));
+    }
+    console.log('User disconnected:', socket.id);
+  });
+});
+
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
