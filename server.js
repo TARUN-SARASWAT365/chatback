@@ -42,15 +42,16 @@ app.post('/api/users/register', async (req, res) => {
   if (!username || !password)
     return res.status(400).json({ error: 'Username and password required' });
 
-  const existingUser = await User.findOne({ username });
-  if (existingUser) return res.status(400).json({ error: 'Username already taken' });
-
   try {
+    const existingUser = await User.findOne({ username });
+    if (existingUser) return res.status(400).json({ error: 'Username already taken' });
+
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = new User({ username, password: hashedPassword });
     await user.save();
     res.json({ message: 'User registered successfully' });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Error registering user' });
   }
 });
@@ -61,13 +62,18 @@ app.post('/api/users/login', async (req, res) => {
   if (!username || !password)
     return res.status(400).json({ error: 'Username and password required' });
 
-  const user = await User.findOne({ username });
-  if (!user) return res.status(400).json({ error: 'Invalid credentials' });
+  try {
+    const user = await User.findOne({ username });
+    if (!user) return res.status(400).json({ error: 'Invalid credentials' });
 
-  const isMatch = await bcrypt.compare(password, user.password);
-  if (!isMatch) return res.status(400).json({ error: 'Invalid credentials' });
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ error: 'Invalid credentials' });
 
-  res.json({ username: user.username });
+    res.json({ username: user.username });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error logging in' });
+  }
 });
 
 // GET ALL USERS
@@ -75,7 +81,8 @@ app.get('/api/users', async (req, res) => {
   try {
     const users = await User.find({}, 'username');
     res.json(users);
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
@@ -95,7 +102,8 @@ app.get('/api/messages', async (req, res) => {
     }).sort({ timestamp: 1 });
 
     res.json(messages);
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Failed to fetch messages' });
   }
 });
@@ -110,7 +118,8 @@ app.post('/api/messages', async (req, res) => {
     const message = new Message({ sender, receiver, content });
     await message.save();
     res.json(message);
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Failed to save message' });
   }
 });
@@ -121,7 +130,8 @@ app.delete('/api/messages/:id', async (req, res) => {
   try {
     await Message.findByIdAndDelete(id);
     res.json({ message: 'Message deleted successfully' });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Failed to delete message' });
   }
 });
