@@ -3,6 +3,7 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 const http = require('http');
 const { Server } = require('socket.io');
+const bcrypt = require('bcrypt');  // added bcrypt
 require('dotenv').config();
 
 const app = express();
@@ -15,7 +16,7 @@ app.use(express.json());
 // Mongoose schemas (User & Message)
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
+  password: { type: String, required: true }, // hashed password
 });
 
 const messageSchema = new mongoose.Schema({
@@ -48,9 +49,14 @@ app.post('/api/users/register', async (req, res) => {
   const userExists = await User.findOne({ username });
   if (userExists) return res.status(400).json({ error: 'Username already taken' });
 
-  const user = new User({ username, password });
-  await user.save();
-  res.json({ message: 'User registered successfully' });
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10); // hash password
+    const user = new User({ username, password: hashedPassword });
+    await user.save();
+    res.json({ message: 'User registered successfully' });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error while registering user' });
+  }
 });
 
 // Login user
@@ -58,16 +64,27 @@ app.post('/api/users/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
 
-  const user = await User.findOne({ username });
-  if (!user || user.password !== password) return res.status(400).json({ error: 'Invalid credentials' });
+  try {
+    const user = await User.findOne({ username });
+    if (!user) return res.status(400).json({ error: 'Invalid credentials' });
 
-  res.json({ username: user.username });
+    const passwordMatch = await bcrypt.compare(password, user.password);
+    if (!passwordMatch) return res.status(400).json({ error: 'Invalid credentials' });
+
+    res.json({ username: user.username });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error during login' });
+  }
 });
 
 // Get all users
 app.get('/api/users', async (req, res) => {
-  const users = await User.find({}, 'username');
-  res.json(users);
+  try {
+    const users = await User.find({}, 'username');
+    res.json(users);
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
 });
 
 // ========== MESSAGE ROUTES ==========
@@ -77,14 +94,18 @@ app.get('/api/messages', async (req, res) => {
   const { sender, receiver } = req.query;
   if (!sender || !receiver) return res.status(400).json({ error: 'Sender and receiver required' });
 
-  const messages = await Message.find({
-    $or: [
-      { sender, receiver },
-      { sender: receiver, receiver: sender }
-    ]
-  }).sort({ timestamp: 1 });
+  try {
+    const messages = await Message.find({
+      $or: [
+        { sender, receiver },
+        { sender: receiver, receiver: sender }
+      ]
+    }).sort({ timestamp: 1 });
 
-  res.json(messages);
+    res.json(messages);
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch messages' });
+  }
 });
 
 // Save new message
@@ -92,17 +113,21 @@ app.post('/api/messages', async (req, res) => {
   const { sender, receiver, content } = req.body;
   if (!sender || !receiver || !content) return res.status(400).json({ error: 'Missing fields' });
 
-  const message = new Message({
-    sender,
-    receiver,
-    content,
-    timestamp: new Date(),
-    reactions: [],
-    seen: false,
-  });
+  try {
+    const message = new Message({
+      sender,
+      receiver,
+      content,
+      timestamp: new Date(),
+      reactions: [],
+      seen: false,
+    });
 
-  await message.save();
-  res.json(message);
+    await message.save();
+    res.json(message);
+  } catch {
+    res.status(500).json({ error: 'Failed to save message' });
+  }
 });
 
 // ======= SOCKET.IO =======
