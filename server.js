@@ -6,7 +6,7 @@ const { Server } = require('socket.io');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-require('dotenv').config(); // ✅ Load .env variables (optional if using Render env vars)
+require('dotenv').config();
 
 const User = require('./models/User');
 const Message = require('./models/Message');
@@ -24,10 +24,10 @@ app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Ensure uploads directory exists
+// Create uploads folder if missing
 if (!fs.existsSync('./uploads')) fs.mkdirSync('./uploads');
 
-// Multer setup for file uploads
+// Multer config
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, 'uploads/'),
   filename: (req, file, cb) =>
@@ -35,44 +35,51 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+// File upload route
 app.post('/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-  // ✅ Updated for Render URL safety
   const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
   console.log('📁 File uploaded:', fileUrl);
-
   res.json({ url: fileUrl });
 });
 
-// ✅ MongoDB connection using env variable
+// MongoDB connect
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB connected'))
-  .catch(err => console.error('❌ MongoDB connection error:', err));
+  .catch(err => console.error('❌ MongoDB error:', err));
 
-// Active users
+// Online user tracking
 const usersMap = {};
 const emitOnlineUsers = () => {
   const onlineUsernames = Object.keys(usersMap);
   io.emit('online_users', onlineUsernames);
 };
 
+// Socket events
 io.on('connection', socket => {
   console.log('🟢 Connected:', socket.id);
 
+  // ✅ User comes online
   socket.on('user_connected', username => {
     usersMap[username] = socket.id;
     emitOnlineUsers();
   });
 
+  // ✅ Send message
   socket.on('send_message', async data => {
     try {
+      const isImage = typeof data.content === 'string' &&
+        data.content.match(/\.(jpeg|jpg|png|gif|webp)$/i);
+
       const message = {
         ...data,
+        type: isImage ? 'image' : 'text',
         timestamp: data.timestamp || new Date(),
         seen: false
       };
+
       const saved = await Message.create(message);
 
       const targetSocket = usersMap[data.receiver];
@@ -83,6 +90,15 @@ io.on('connection', socket => {
     }
   });
 
+  // ✅ Typing indicator
+  socket.on('typing', ({ sender, receiver }) => {
+    const targetSocket = usersMap[receiver];
+    if (targetSocket) {
+      io.to(targetSocket).emit('typing', sender);
+    }
+  });
+
+  // ✅ Update message
   socket.on('update_message', async msg => {
     const updated = await Message.findByIdAndUpdate(
       msg._id,
@@ -92,17 +108,25 @@ io.on('connection', socket => {
     io.emit('message_updated', updated);
   });
 
+  // ✅ Delete message
   socket.on('delete_message', async id => {
     await Message.findByIdAndDelete(id);
     io.emit('message_deleted', id);
   });
 
+  // ✅ Mark messages as seen
   socket.on('mark_seen', async ({ sender, receiver }) => {
     await Message.updateMany({ sender, receiver, seen: false }, { seen: true });
-    const seenMessages = await Message.find({ sender, receiver });
+    const seenMessages = await Message.find({
+      $or: [
+        { sender, receiver },
+        { sender: receiver, receiver: sender }
+      ]
+    }).sort({ timestamp: 1 });
     socket.emit('messages_seen', seenMessages);
   });
 
+  // ✅ Disconnect
   socket.on('disconnect', () => {
     for (let username in usersMap) {
       if (usersMap[username] === socket.id) {
@@ -114,7 +138,7 @@ io.on('connection', socket => {
   });
 });
 
-// ✅ API routes
+// Auth APIs
 app.post('/register', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password)
@@ -155,6 +179,6 @@ app.get('/messages', async (req, res) => {
   res.json(messages);
 });
 
-// ✅ Use dynamic port (important for Render)
+// Start server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
