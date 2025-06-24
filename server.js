@@ -1,109 +1,187 @@
+require('dotenv').config();
 const express = require('express');
-const http = require('http');
-const socketIo = require('socket.io');
 const cors = require('cors');
-const { v4: uuidv4 } = require('uuid');
+const mongoose = require('mongoose');
+const http = require('http');
+const bcrypt = require('bcrypt');
+const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server, {
-  cors: {
-    origin: '*', // Change this to your frontend URL in production
-  }
-});
 
-app.use(cors());
+const FRONTEND_URL = 'https://chat-qelj.vercel.app'; // aapke frontend ka URL
+
+app.use(cors({
+  origin: FRONTEND_URL,
+  methods: ['GET', 'POST', 'DELETE'],
+  credentials: true,
+}));
+
 app.use(express.json());
 
-// In-memory storage for demo (replace with DB in production)
-let users = [
-  { username: 'alice' },
-  { username: 'bob' },
-  { username: 'charlie' },
-];
-let messages = []; // { _id, sender, receiver, content, timestamp, reactions: [{ user, reaction }] }
+// MongoDB connection
+const mongoUri = process.env.MONGO_URI;
+if (!mongoUri) {
+  console.error('❌ MONGO_URI is not defined in environment variables!');
+  process.exit(1);
+}
 
-// Online users tracking
+mongoose.connect(mongoUri)
+  .then(() => console.log('✅ MongoDB connected'))
+  .catch(err => {
+    console.error('❌ MongoDB connection error:', err.message);
+    process.exit(1);
+  });
+
+// Schemas
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  lastSeen: { type: Date, default: Date.now },
+  profilePicUrl: String,
+});
+const User = mongoose.model('User', userSchema);
+
+const messageSchema = new mongoose.Schema({
+  sender: String,
+  receiver: String,
+  content: String,
+  timestamp: { type: Date, default: Date.now },
+  reactions: [{ user: String, reaction: String }],
+  status: { type: String, enum: ['sent', 'delivered', 'read'], default: 'sent' },
+});
+const Message = mongoose.model('Message', messageSchema);
+
+// Routes same as before (register, login, get users, get messages, save messages, delete messages)...
+
+app.post('/api/users/register', async (req, res) => {
+  // same as before
+});
+
+app.post('/api/users/login', async (req, res) => {
+  // same as before
+});
+
+app.get('/api/users', async (req, res) => {
+  try {
+    const users = await User.find({}, 'username lastSeen profilePicUrl');
+    res.json(users);
+  } catch (err) {
+    console.error('Get users error:', err);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+app.get('/api/messages', async (req, res) => {
+  // same as before
+});
+
+app.post('/api/messages', async (req, res) => {
+  // same as before
+});
+
+app.delete('/api/messages/:id', async (req, res) => {
+  // same as before
+});
+
+// SOCKET.IO SETUP
+const io = new Server(server, {
+  cors: {
+    origin: FRONTEND_URL,
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+});
+
 let onlineUsers = new Set();
 
-// API: Get all users
-app.get('/api/users', (req, res) => {
-  res.json(users);
-});
+io.on('connection', socket => {
+  console.log('User connected:', socket.id);
 
-// API: Get messages between two users
-app.get('/api/messages', (req, res) => {
-  const { sender, receiver } = req.query;
-  if (!sender || !receiver) {
-    return res.status(400).json({ error: 'sender and receiver are required' });
-  }
-  const chatMessages = messages.filter(
-    m =>
-      (m.sender === sender && m.receiver === receiver) ||
-      (m.sender === receiver && m.receiver === sender)
-  );
-  res.json(chatMessages);
-});
-
-// Socket.io connection
-io.on('connection', (socket) => {
-  console.log('New client connected', socket.id);
-
-  // When a user connects and sends username
-  socket.on('user_connected', (username) => {
+  socket.on('user_connected', username => {
     socket.username = username;
     onlineUsers.add(username);
-
     io.emit('online_users', Array.from(onlineUsers));
   });
 
-  // When a user disconnects
-  socket.on('disconnect', () => {
+  socket.on('send_message', async (msg) => {
+    const message = new Message({ ...msg, status: 'sent' });
+    await message.save();
+
+    io.emit('receive_message', message);
+  });
+
+  // Typing indicator
+  socket.on('typing', ({ sender, receiver, isTyping }) => {
+    socket.to(receiver).emit('typing', { sender, isTyping });
+  });
+
+  // Message delivered status
+  socket.on('message_delivered', async ({ messageId }) => {
+    try {
+      const message = await Message.findById(messageId);
+      if (message && message.status === 'sent') {
+        message.status = 'delivered';
+        await message.save();
+        io.emit('message_status_updated', { messageId, status: 'delivered' });
+      }
+    } catch (err) {
+      console.error('Error updating message delivered status:', err);
+    }
+  });
+
+  // Message read status
+  socket.on('message_read', async ({ messageId }) => {
+    try {
+      const message = await Message.findById(messageId);
+      if (message && message.status !== 'read') {
+        message.status = 'read';
+        await message.save();
+        io.emit('message_status_updated', { messageId, status: 'read' });
+      }
+    } catch (err) {
+      console.error('Error updating message read status:', err);
+    }
+  });
+
+  socket.on('toggle_reaction', async ({ messageId, user, reaction }) => {
+    try {
+      const message = await Message.findById(messageId);
+      if (!message) return;
+
+      const existingIndex = message.reactions.findIndex(
+        r => r.user === user && r.reaction === reaction
+      );
+
+      if (existingIndex !== -1) {
+        message.reactions.splice(existingIndex, 1);
+      } else {
+        message.reactions.push({ user, reaction });
+      }
+
+      await message.save();
+      io.emit('reaction_updated', { messageId, reactions: message.reactions });
+    } catch (err) {
+      console.log('Error toggling reaction:', err);
+    }
+  });
+
+  socket.on('disconnect', async () => {
     if (socket.username) {
       onlineUsers.delete(socket.username);
+      try {
+        await User.findOneAndUpdate({ username: socket.username }, { lastSeen: new Date() });
+      } catch (err) {
+        console.error('Error updating lastSeen:', err);
+      }
       io.emit('online_users', Array.from(onlineUsers));
     }
-    console.log('Client disconnected', socket.id);
-  });
-
-  // Handle sending message
-  socket.on('send_message', (msg) => {
-    // Assign unique ID to message if not provided
-    if (!msg._id) {
-      msg._id = uuidv4();
-    }
-    if (!msg.reactions) {
-      msg.reactions = [];
-    }
-    messages.push(msg);
-    io.emit('receive_message', msg);
-  });
-
-  // Handle toggle reaction
-  socket.on('toggle_reaction', ({ messageId, user, reaction }) => {
-    const message = messages.find(m => m._id === messageId);
-    if (!message) return;
-
-    // Check if user already reacted with this reaction
-    const existingIndex = message.reactions.findIndex(r => r.user === user && r.reaction === reaction);
-    if (existingIndex !== -1) {
-      // Remove reaction
-      message.reactions.splice(existingIndex, 1);
-    } else {
-      // Add reaction
-      message.reactions.push({ user, reaction });
-    }
-
-    io.emit('reaction_updated', { messageId, reactions: message.reactions });
-  });
-
-  // Typing indicator event
-  socket.on('typing', ({ sender, receiver, isTyping }) => {
-    // Notify only sender and receiver about typing status
-    // Send to all clients for demo simplicity
-    io.emit('typing', { sender, isTyping });
+    console.log('User disconnected:', socket.id);
   });
 });
 
+// Start Server
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
