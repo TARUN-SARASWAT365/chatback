@@ -9,11 +9,10 @@ const { Server } = require('socket.io');
 const app = express();
 const server = http.createServer(app);
 
-const FRONTEND_URL = 'https://chat-qelj.vercel.app';
+const FRONTEND_URL = 'https://chat-qelj.vercel.app';  // aapke frontend ka URL
 
-// Setup CORS with frontend URL
 app.use(cors({
-  origin: ['https://chat-qelj.vercel.app', 'http://localhost:3000'],  // frontends allowed
+  origin: FRONTEND_URL,
   methods: ['GET', 'POST', 'DELETE'],
   credentials: true,
 }));
@@ -74,8 +73,8 @@ app.post('/api/users/register', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
-// LOGIN with debug logsapp.post('/api/users/login', async (req, res) => {
+// LOGIN with debug logs
+app.post('/api/users/login', async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password)
