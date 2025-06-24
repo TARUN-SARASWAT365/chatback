@@ -75,34 +75,27 @@ app.post('/api/users/register', async (req, res) => {
   }
 });
 
-// LOGIN with debug logs
-app.post('/api/users/login', async (req, res) => {
+// LOGIN with debug logsapp.post('/api/users/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-    console.log('Login attempt:', username, password);
-
-    if (!username || !password) {
-      console.log('Missing username or password');
+    if (!username || !password)
       return res.status(400).json({ error: 'Username and password required' });
-    }
 
     const user = await User.findOne({ username });
     if (!user) {
-      console.log('User not found:', username);
+      console.log(`Login fail: user ${username} not found`);
       return res.status(400).json({ error: 'Invalid credentials' });
     }
 
-    console.log('User found:', user);
+    console.log(`User found: ${user.username}, hashed password: ${user.password}`);
 
     const isMatch = await bcrypt.compare(password, user.password);
-    console.log('Password match:', isMatch);
+    console.log(`Password match result: ${isMatch}`);
 
     if (!isMatch) {
-      console.log('Password does not match for user:', username);
       return res.status(400).json({ error: 'Invalid credentials' });
     }
 
-    console.log('Login successful for user:', username);
     res.json({ username: user.username });
   } catch (err) {
     console.error('Login error:', err);
