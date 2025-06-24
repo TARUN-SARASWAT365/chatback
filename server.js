@@ -13,7 +13,7 @@ const FRONTEND_URL = 'https://chat-qelj.vercel.app';
 
 // Setup CORS with frontend URL
 app.use(cors({
-  origin: FRONTEND_URL, // Frontend URL in production
+  origin: ['https://chat-qelj.vercel.app', 'http://localhost:3000'],  // frontends allowed
   methods: ['GET', 'POST', 'DELETE'],
   credentials: true,
 }));
