@@ -9,10 +9,23 @@ const { Server } = require('socket.io');
 const app = express();
 const server = http.createServer(app);
 
-const FRONTEND_URL = 'https://chat-qelj.vercel.app';  // aapke frontend ka URL
+// Multiple allowed origins
+const allowedOrigins = [
+  'https://chat-qelj.vercel.app',
+  'https://chat-qelj-git-main-tarun-saraswat365s-projects.vercel.app',
+];
 
 app.use(cors({
-  origin: FRONTEND_URL,
+  origin: function(origin, callback) {
+    // Allow requests with no origin like Postman or curl
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = `CORS policy: Origin ${origin} not allowed.`;
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
   methods: ['GET', 'POST', 'DELETE'],
   credentials: true,
 }));
@@ -73,6 +86,7 @@ app.post('/api/users/register', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
 // LOGIN with debug logs
 app.post('/api/users/login', async (req, res) => {
   try {
@@ -165,7 +179,7 @@ app.delete('/api/messages/:id', async (req, res) => {
 // SOCKET.IO SETUP
 const io = new Server(server, {
   cors: {
-    origin: FRONTEND_URL,
+    origin: allowedOrigins,
     methods: ['GET', 'POST'],
     credentials: true,
   },
