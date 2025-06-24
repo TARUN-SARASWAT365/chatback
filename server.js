@@ -4,13 +4,16 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 const http = require('http');
 const bcrypt = require('bcrypt');
+const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
 
-// Setup CORS — allow all origins for now
+const FRONTEND_URL = 'https://chat-sh73-2l89316gw-tarun-saraswat365s-projects.vercel.app';
+
+// Setup CORS with frontend URL
 app.use(cors({
-  origin: '*', // Change this to your frontend URL in production
+  origin: FRONTEND_URL, // Frontend URL in production
   methods: ['GET', 'POST', 'DELETE'],
   credentials: true,
 }));
@@ -155,6 +158,63 @@ app.delete('/api/messages/:id', async (req, res) => {
     console.error('Delete message error:', err);
     res.status(500).json({ error: 'Failed to delete message' });
   }
+});
+
+// SOCKET.IO SETUP
+const io = new Server(server, {
+  cors: {
+    origin: FRONTEND_URL,
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+});
+
+let onlineUsers = new Set();
+
+io.on('connection', socket => {
+  console.log('User connected:', socket.id);
+
+  socket.on('user_connected', username => {
+    socket.username = username;
+    onlineUsers.add(username);
+    io.emit('online_users', Array.from(onlineUsers));
+  });
+
+  socket.on('send_message', msg => {
+    io.emit('receive_message', msg);
+  });
+
+  socket.on('toggle_reaction', async ({ messageId, user, reaction }) => {
+    try {
+      const message = await Message.findById(messageId);
+      if (!message) return;
+
+      const existingIndex = message.reactions.findIndex(
+        r => r.user === user && r.reaction === reaction
+      );
+
+      if (existingIndex !== -1) {
+        // Remove reaction
+        message.reactions.splice(existingIndex, 1);
+      } else {
+        // Add reaction
+        message.reactions.push({ user, reaction });
+      }
+
+      await message.save();
+      io.emit('reaction_updated', { messageId, reactions: message.reactions });
+    } catch (err) {
+      console.log('Error toggling reaction:', err);
+    }
+  });
+
+  socket.on('disconnect', () => {
+    if (socket.username) {
+      onlineUsers.delete(socket.username);
+      io.emit('online_users', Array.from(onlineUsers));
+    }
+    console.log('User disconnected:', socket.id);
+  });
 });
 
 // Start Server
