@@ -9,7 +9,7 @@ const { Server } = require('socket.io');
 const app = express();
 const server = http.createServer(app);
 
-const FRONTEND_URL = 'https://chat-sh73-2l89316gw-tarun-saraswat365s-projects.vercel.app';
+const FRONTEND_URL = 'https://chat-qelj.vercel.app';
 
 // Setup CORS with frontend URL
 app.use(cors({
@@ -27,10 +27,7 @@ if (!mongoUri) {
   process.exit(1);
 }
 
-mongoose.connect(mongoUri, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
+mongoose.connect(mongoUri)
   .then(() => console.log('✅ MongoDB connected'))
   .catch(err => {
     console.error('❌ MongoDB connection error:', err.message);
@@ -78,21 +75,34 @@ app.post('/api/users/register', async (req, res) => {
   }
 });
 
-// LOGIN
+// LOGIN with debug logs
 app.post('/api/users/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password)
+    console.log('Login attempt:', username, password);
+
+    if (!username || !password) {
+      console.log('Missing username or password');
       return res.status(400).json({ error: 'Username and password required' });
+    }
 
     const user = await User.findOne({ username });
-    if (!user)
+    if (!user) {
+      console.log('User not found:', username);
       return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    console.log('User found:', user);
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch)
-      return res.status(400).json({ error: 'Invalid credentials' });
+    console.log('Password match:', isMatch);
 
+    if (!isMatch) {
+      console.log('Password does not match for user:', username);
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    console.log('Login successful for user:', username);
     res.json({ username: user.username });
   } catch (err) {
     console.error('Login error:', err);
